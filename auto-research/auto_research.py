@@ -9,6 +9,7 @@ import requests
 import json
 from datetime import datetime, timedelta
 import logging
+import re
 from typing import List, Optional, Dict
 
 class AutoResearchSystem:
@@ -141,12 +142,15 @@ class AutoResearchSystem:
         
         try:
             self.logger.info("Calling Perplexity API...")
-            response = requests.post(url, headers=headers, json=data, timeout=120)
+            response = requests.post(url, headers=headers, json=data, timeout=1200)
             response.raise_for_status()
             
             result = response.json()
             if 'choices' in result and len(result['choices']) > 0:
-                return result['choices'][0]['message']['content']
+                content = result['choices'][0]['message']['content']
+                # search_resultsも一緒に返す
+                search_results = result.get('search_results', [])
+                return {'content': content, 'search_results': search_results}
             else:
                 self.logger.error("Unexpected API response format")
                 return None
@@ -158,8 +162,21 @@ class AutoResearchSystem:
             self.logger.error(f"JSON decode error: {e}")
             return None
     
-    def save_research_report(self, content: str) -> str:
+    def save_research_report(self, api_response) -> str:
         """リサーチレポートをMarkdownファイルとして保存"""
+        # APIレスポンスの形式に応じて処理
+        if isinstance(api_response, str):
+            # 文字列の場合（後方互換性）
+            content = api_response
+            search_results = []
+        elif isinstance(api_response, dict):
+            # 辞書の場合（新形式）
+            content = api_response.get('content', '')
+            search_results = api_response.get('search_results', [])
+        else:
+            self.logger.error("Invalid API response format")
+            return ""
+        
         output_dir = self.config.get('OUTPUT_DIR', 
             '/Users/haruki/Library/Mobile Documents/iCloud~md~obsidian/Documents/I-think-therefore-I-am/artifact/research-report')
         
@@ -171,6 +188,30 @@ class AutoResearchSystem:
         filename = f"{today}.md"
         filepath = os.path.join(output_dir, filename)
         
+        # 文章中の引用をクリック可能なリンクに変換
+        if search_results:
+            def replace_citation(match):
+                citation_num = int(match.group(1))
+                if 1 <= citation_num <= len(search_results):
+                    url = search_results[citation_num - 1].get('url', '')
+                    if url:
+                        return f'[{citation_num}]({url})'
+                return match.group(0)  # 元のまま
+            
+            # [数字] のパターンを置換
+            citation_pattern = r'\[(\d+)\]'
+            content = re.sub(citation_pattern, replace_citation, content)
+        
+        # 参考文献リストを追加
+        citation_list = ""
+        if search_results:
+            citation_list = "\n\n## 参考文献\n\n"
+            for i, result in enumerate(search_results, 1):
+                title = result.get('title', f'Source {i}')
+                url = result.get('url', '')
+                if url:
+                    citation_list += f"{i}. [{title}]({url})\n"
+        
         # Markdownコンテンツ作成
         markdown_content = f"""# 自動リサーチレポート - {today}
 
@@ -178,7 +219,7 @@ class AutoResearchSystem:
 
 ---
 
-{content}
+{content}{citation_list}
 
 ---
 

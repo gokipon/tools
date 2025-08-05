@@ -1,0 +1,80 @@
+# auto-get-myinfo システム設定ファイル
+# 各情報源の有効/無効、スケジュール、出力設定を管理
+
+collectors:
+  safari:
+    enabled: true
+    schedule: "0 30 0 * * *"  # 毎日0:30実行
+    min_visit_count: 1        # 最小訪問回数
+    exclude_sites: []         # 除外サイト（現在は空）
+    exclude_patterns:         # 除外パターン
+      - "localhost"
+      - "127.0.0.1"
+      - "private browsing"
+  
+  chrome:
+    enabled: false
+    schedule: "0 30 0 * * *"
+    min_visit_count: 1
+    exclude_sites: []
+    exclude_patterns:
+      - "localhost"
+      - "127.0.0.1"
+
+formatters:
+  markdown:
+    enabled: true
+    template: "({timestamp}){title}, {visit_count}回"
+    header: "### 今日の閲覧履歴"
+  
+  json:
+    enabled: false
+    pretty_print: true
+
+outputs:
+  obsidian:
+    enabled: true
+    base_path: "/Users/haruki/Library/Mobile Documents/iCloud~md~obsidian/Documents/I-think-therefore-I-am/diary"
+    path_format: "{YYYY}/{MM}/{YYYY-MM-DD}.md"
+    append_mode: true
+    create_directories: true
+  
+  csv:
+    enabled: false
+    path: "exports/history_{YYYY-MM-DD}.csv"
+    include_headers: true
+
+logging:
+  enabled: true
+  level: "INFO"          # DEBUG, INFO, WARN, ERROR
+  path: "logs/auto-get-myinfo.log"
+  max_file_size: "10MB"
+  max_files: 5
+  format: "[{timestamp}] {level}: {message}"
+
+system:
+  timezone: "Asia/Tokyo"
+  temp_dir: "/tmp/auto-get-myinfo"
+  cleanup_temp_files: true
+  max_execution_time: 300  # 5分
+  retry_count: 3
+  retry_delay: 10  # 秒
+
+# Phase 2 拡張予定
+future_collectors:
+  calendar:
+    enabled: false
+    sources: ["google", "outlook"]
+  
+  photos:
+    enabled: false
+    include_exif: true
+    date_range: 1  # 日数
+  
+  paypay:
+    enabled: false
+    api_key: ""
+  
+  music:
+    enabled: false
+    sources: ["spotify", "apple_music"]

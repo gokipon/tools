@@ -1,0 +1,32 @@
+#!/bin/bash
+
+# culculate-sum - プログラムファイル
+# 入力した文字を足し合わせる (adds up input characters)
+
+calculate_sum() {
+    local input="$1"
+    local sum=0
+    
+    # 文字列の各文字のASCII値を合計する
+    for (( i=0; i<${#input}; i++ )); do
+        char="${input:$i:1}"
+        ascii_value=$(printf "%d" "'$char")
+        sum=$((sum + ascii_value))
+    done
+    
+    echo $sum
+}
+
+# メイン処理
+if [ $# -eq 0 ]; then
+    echo "使用法: $0 <文字列>"
+    echo "例: $0 'hello'"
+    exit 1
+fi
+
+input_string="$1"
+result=$(calculate_sum "$input_string")
+
+echo "入力文字列: $input_string"
+echo "文字数: ${#input_string}"
+echo "ASCII値の合計: $result"

@@ -3,7 +3,7 @@ name: Auto Issue Resolver
 on:
   schedule:
     # - cron: "0,30 14-20 * * *" # JST 23:00-05:30 (UTC 14:00-20:30)
-    - cron: "0 15 * * *" # JST 06:00 (UTC 21:00)
+    - cron: "0 20 * * *" # JST 06:00 (UTC 21:00)
   workflow_dispatch: # 手動実行用
 
 jobs:
@@ -13,7 +13,7 @@ jobs:
       - name: Find and process highest priority Issue
         uses: actions/github-script@v7
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ secrets.PERSONAL_ACCESS_TOKEN || secrets.GITHUB_TOKEN }}
           script: |
             const priorities = ['high','middle','low'];
             const processedLabel = 'claude-code-requested';

@@ -24,7 +24,8 @@ class PerplexityService(BaseService):
         'search_input': 'textarea[placeholder*="質問"],textarea[placeholder*="Ask"],input[placeholder*="質問"],input[placeholder*="Ask"]',
         'search_button': 'button[type="submit"],button[aria-label*="送信"],button[aria-label*="Submit"]',
         'result_container': '.prose,.answer,.response,article',
-        'loading_indicator': '.loading,.spinner,[data-loading="true"]'
+        'loading_indicator': '.loading,.spinner,[data-loading="true"]',
+        'research_mode_button': 'button[value="research"][role="radio"],button.segmented-control[value="research"]'
     }
     
     def __init__(self, browser_manager):
@@ -51,6 +52,9 @@ class PerplexityService(BaseService):
             self.navigate_to_service()
             time.sleep(2)
             
+            # リサーチモードに切り替え
+            self._switch_to_research_mode()
+            
             # 質問入力
             self._input_question(question)
             
@@ -66,6 +70,38 @@ class PerplexityService(BaseService):
         except Exception as e:
             logger.error(f"Perplexity操作エラー: {e}")
             raise
+    
+    def _switch_to_research_mode(self) -> None:
+        """リサーチモードに切り替える"""
+        try:
+            # リサーチモードボタンを探す
+            research_button = self.element_helper.find_element_with_fallbacks(
+                self.driver,
+                [
+                    'button[value="research"][role="radio"]',
+                    'button.segmented-control[value="research"]',
+                    'button[role="radio"][aria-checked="false"][value="research"]',
+                    '.segmented-control button[value="research"]'
+                ]
+            )
+            
+            if research_button:
+                # ボタンがすでに選択されているかチェック
+                is_selected = research_button.get_attribute("aria-checked") == "true"
+                
+                if not is_selected:
+                    # JavaScriptでクリックして確実に実行
+                    self.driver.execute_script("arguments[0].click();", research_button)
+                    logger.info("リサーチモードに切り替えました")
+                    time.sleep(1)  # モード切り替え後の待機
+                else:
+                    logger.info("すでにリサーチモードが選択されています")
+            else:
+                logger.warning("リサーチモードボタンが見つかりません")
+                
+        except Exception as e:
+            logger.warning(f"リサーチモード切り替えエラー (継続): {e}")
+            # エラーが発生しても処理を継続（モード切り替えは必須ではない）
     
     def _input_question(self, question: str) -> None:
         """質問をテキストエリアに入力"""

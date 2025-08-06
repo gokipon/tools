@@ -1,0 +1,23 @@
+{
+  "chrome": {
+    "remote_debugging_port": 9222,
+    "user_data_dir": "/tmp/chrome-selenium-debug",
+    "startup_timeout": 10
+  },
+  "paths": {
+    "obsidian_base": "/Users/haruki/Library/Mobile Documents/iCloud~md~obsidian/Documents/I-think-therefore-I-am",
+    "template_file": "knowledge/llm-usecase/デイリーリサーチ.md",
+    "diary_base": "diary",
+    "output_dir": "output"
+  },
+  "automation": {
+    "default_timeout": 30,
+    "retry_count": 3,
+    "retry_delay": 2.0
+  },
+  "logging": {
+    "level": "INFO",
+    "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    "file": "web_automation.log"
+  }
+}

@@ -41,7 +41,7 @@ class AutoResearchSystem:
         )
         self.logger = logging.getLogger(__name__)
     
-    def get_diary_files(self, days_back: int = 2) -> List[str]:
+    def get_diary_files(self, days_back: int = 1) -> List[str]:
         """Obsidian日記ファイルのパスを取得"""
         diary_base_path = self.config.get('DIARY_PATH', '/Users/haruki/Library/Mobile Documents/iCloud~md~obsidian/Documents/I-think-therefore-I-am/diary')
         diary_files = []

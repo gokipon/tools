@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- launchd設定ファイル for auto-get-myinfo -->
+    <!-- ~/Library/LaunchAgents/ にコピーして使用 -->
+    
+    <key>Label</key>
+    <string>com.user.auto-get-myinfo</string>
+    
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/path/to/tools/auto-get-myinfo/main.sh</string>
+    </array>
+    
+    <!-- 毎日0:30に実行 -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>0</integer>
+        <key>Minute</key>
+        <integer>30</integer>
+    </dict>
+    
+    <!-- ログ出力設定 -->
+    <key>StandardOutPath</key>
+    <string>/tmp/auto-get-myinfo-stdout.log</string>
+    
+    <key>StandardErrorPath</key>
+    <string>/tmp/auto-get-myinfo-stderr.log</string>
+    
+    <!-- 実行環境設定 -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin</string>
+        <key>HOME</key>
+        <string>/Users/haruki</string>
+    </dict>
+    
+    <!-- セキュリティ設定 -->
+    <key>RunAtLoad</key>
+    <false/>
+    
+    <!-- システムがスリープ中でも実行 -->
+    <key>KeepAlive</key>
+    <false/>
+    
+    <!-- ネットワーク接続時のみ実行 -->
+    <key>StartOnMount</key>
+    <false/>
+    
+    <!-- 実行失敗時の再試行設定 -->
+    <key>ThrottleInterval</key>
+    <integer>600</integer>
+    
+    <!-- 作業ディレクトリ -->
+    <key>WorkingDirectory</key>
+    <string>/path/to/tools/auto-get-myinfo</string>
+    
+    <!-- プロセス制限 -->
+    <key>ProcessType</key>
+    <string>Background</string>
+    
+    <!-- ユーザーログイン時のみ実行 -->
+    <key>LimitLoadToSessionType</key>
+    <array>
+        <string>Aqua</string>
+    </array>
+</dict>
+</plist>

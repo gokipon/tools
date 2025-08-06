@@ -102,33 +102,80 @@ crontab -e
 
 ## 🔧 設定
 
-### 設定ファイル（config.json）
+### 環境変数の設定
+
+マシン固有の情報や機密情報は環境変数で設定します。
+
+#### 必須環境変数
+
+```bash
+# Obsidianのベースディレクトリパス（必須）
+export OBSIDIAN_BASE_PATH="/Users/username/Documents/ObsidianVault"
+```
+
+#### オプション環境変数
+
+```bash
+# Chromeデバッグポート（デフォルト: 9222）
+export CHROME_DEBUG_PORT=9222
+
+# Chromeユーザーデータディレクトリ（デフォルト: /tmp/chrome-selenium-debug）
+export CHROME_USER_DATA_DIR="/tmp/chrome-selenium-debug"
+
+# テンプレートファイル相対パス（デフォルト: knowledge/llm-usecase/デイリーリサーチ.md）
+export TEMPLATE_FILE="templates/daily_research.md"
+
+# 日記ディレクトリ相対パス（デフォルト: diary）
+export DIARY_BASE="diary"
+
+# 出力ディレクトリ（デフォルト: ./output）
+export OUTPUT_DIR="./output"
+```
+
+#### .envファイルの使用
+
+プロジェクトルートに`.env`ファイルを作成することで、環境変数を管理できます：
+
+```bash
+# .envファイルをコピーして編集
+cp .env.example .env
+# エディタで必要な値を設定
+```
+
+`.env`ファイルの例：
+```bash
+# 必須設定
+OBSIDIAN_BASE_PATH=/Users/yourname/Documents/ObsidianVault
+
+# オプション設定（必要に応じてコメントアウト）
+# TEMPLATE_FILE=knowledge/llm-usecase/デイリーリサーチ.md
+# DIARY_BASE=diary
+# OUTPUT_DIR=./output
+# CHROME_DEBUG_PORT=9222
+# CHROME_USER_DATA_DIR=/tmp/chrome-selenium-debug
+```
+
+### アプリケーション設定ファイル（config.json）
+
+アプリケーションの動作設定は`config.json`で管理します：
 
 ```json
 {
   "chrome": {
     "remote_debugging_port": 9222,
-    "user_data_dir": "/tmp/chrome-selenium-debug"
-  },
-  "paths": {
-    "obsidian_base": "/Users/username/obsidian/vault",
-    "template_file": "templates/daily_research.md",
-    "diary_base": "diary",
-    "output_dir": "output"
+    "startup_timeout": 10
   },
   "automation": {
     "default_timeout": 30,
-    "retry_count": 3
+    "retry_count": 3,
+    "retry_delay": 2.0
+  },
+  "logging": {
+    "level": "INFO",
+    "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    "file": "web_automation.log"
   }
 }
-```
-
-### 環境変数
-
-```bash
-export CHROME_DEBUG_PORT=9222
-export OBSIDIAN_BASE_PATH="/Users/username/obsidian/vault"
-export OUTPUT_DIR="./output"
 ```
 
 ## 🌐 サポートサービス

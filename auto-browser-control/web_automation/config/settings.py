@@ -8,18 +8,11 @@ from pathlib import Path
 class Settings:
     """アプリケーション設定"""
     
-    # デフォルト設定
+    # デフォルト設定（アプリケーション動作設定のみ）
     DEFAULT_CONFIG = {
         "chrome": {
             "remote_debugging_port": 9222,
-            "user_data_dir": "/tmp/chrome-selenium-debug",
             "startup_timeout": 10
-        },
-        "paths": {
-            "obsidian_base": "/Users/haruki/Library/Mobile Documents/iCloud~md~obsidian/Documents/I-think-therefore-I-am",
-            "template_file": "knowledge/llm-usecase/デイリーリサーチ.md",
-            "diary_base": "diary",
-            "output_dir": "output"
         },
         "automation": {
             "default_timeout": 30,
@@ -33,18 +26,25 @@ class Settings:
         }
     }
     
-    def __init__(self, config_file: Optional[str] = None):
+    def __init__(self, config_file: Optional[str] = None, env_file: Optional[str] = None):
         """
         Args:
             config_file: 設定ファイルのパス
+            env_file: 環境変数ファイルのパス（.env）
         """
         self.config = self.DEFAULT_CONFIG.copy()
+        
+        # .envファイルがある場合は読み込み
+        self._load_env_file(env_file)
         
         if config_file and os.path.exists(config_file):
             self.load_from_file(config_file)
         
         # 環境変数からオーバーライド
         self._load_from_env()
+        
+        # 必須環境変数の検証
+        self._validate_required_env()
     
     def load_from_file(self, config_file: str) -> None:
         """設定ファイルから読み込み
@@ -63,25 +63,100 @@ class Settings:
         except Exception as e:
             print(f"設定ファイル読み込みエラー: {e}")
     
+    def _load_env_file(self, env_file: Optional[str] = None) -> None:
+        """環境変数ファイル（.env）を読み込み
+        
+        Args:
+            env_file: .envファイルのパス（Noneの場合は.envを自動検索）
+        """
+        if env_file is None:
+            # カレントディレクトリの.envファイルを探す
+            env_file = ".env"
+        
+        if os.path.exists(env_file):
+            try:
+                with open(env_file, 'r', encoding='utf-8') as f:
+                    for line_num, line in enumerate(f, 1):
+                        line = line.strip()
+                        # コメント行や空行をスキップ
+                        if not line or line.startswith('#'):
+                            continue
+                        
+                        # KEY=VALUE形式を解析
+                        if '=' in line:
+                            key, value = line.split('=', 1)
+                            key = key.strip()
+                            value = value.strip()
+                            
+                            # クォートを除去
+                            if (value.startswith('"') and value.endswith('"')) or \
+                               (value.startswith("'") and value.endswith("'")):
+                                value = value[1:-1]
+                            
+                            # 既存の環境変数がない場合のみ設定
+                            if key and not os.getenv(key):
+                                os.environ[key] = value
+                        else:
+                            print(f"Warning: Invalid line format in {env_file}:{line_num}: {line}")
+                            
+            except Exception as e:
+                print(f".envファイル読み込みエラー: {e}")
+    
     def _load_from_env(self) -> None:
-        """環境変数から設定をロード"""
-        # Chrome設定
+        """環境変数から設定をロード（マシン固有・機密情報）"""
+        # Chrome設定（マシン固有）
         if os.getenv("CHROME_DEBUG_PORT"):
             self.config["chrome"]["remote_debugging_port"] = int(os.getenv("CHROME_DEBUG_PORT"))
         
         if os.getenv("CHROME_USER_DATA_DIR"):
+            if "chrome" not in self.config:
+                self.config["chrome"] = {}
             self.config["chrome"]["user_data_dir"] = os.getenv("CHROME_USER_DATA_DIR")
         
-        # Obsidianパス
+        # パス設定（マシン固有）
+        if "paths" not in self.config:
+            self.config["paths"] = {}
+            
+        # 必須のマシン固有パス
         if os.getenv("OBSIDIAN_BASE_PATH"):
             self.config["paths"]["obsidian_base"] = os.getenv("OBSIDIAN_BASE_PATH")
+        else:
+            # デフォルト値は提供しない（環境変数での設定を強制）
+            self.config["paths"]["obsidian_base"] = None
         
         if os.getenv("TEMPLATE_FILE"):
             self.config["paths"]["template_file"] = os.getenv("TEMPLATE_FILE")
+        else:
+            self.config["paths"]["template_file"] = "knowledge/llm-usecase/デイリーリサーチ.md"
         
-        # 出力ディレクトリ
+        if os.getenv("DIARY_BASE"):
+            self.config["paths"]["diary_base"] = os.getenv("DIARY_BASE")
+        else:
+            self.config["paths"]["diary_base"] = "diary"
+        
         if os.getenv("OUTPUT_DIR"):
             self.config["paths"]["output_dir"] = os.getenv("OUTPUT_DIR")
+        else:
+            self.config["paths"]["output_dir"] = "./output"
+        
+        if not os.getenv("CHROME_USER_DATA_DIR"):
+            self.config["chrome"]["user_data_dir"] = "/tmp/chrome-selenium-debug"
+    
+    def _validate_required_env(self) -> None:
+        """必須環境変数の検証"""
+        required_vars = {
+            "OBSIDIAN_BASE_PATH": "Obsidianのベースディレクトリパス"
+        }
+        
+        missing_vars = []
+        for var_name, description in required_vars.items():
+            if not os.getenv(var_name):
+                missing_vars.append(f"{var_name} ({description})")
+        
+        if missing_vars:
+            error_msg = f"必須環境変数が設定されていません:\n" + "\n".join(f"  - {var}" for var in missing_vars)
+            error_msg += "\n\n.envファイルまたはシステム環境変数で設定してください。"
+            raise ValueError(error_msg)
     
     def _deep_merge(self, base_dict: Dict, update_dict: Dict) -> None:
         """辞書のディープマージ"""

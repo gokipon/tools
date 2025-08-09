@@ -24,7 +24,7 @@ collectors:
 formatters:
   markdown:
     enabled: true
-    template: "({timestamp}){title}, {visit_count}回"
+    template: "({timestamp}){title},{url}, {visit_count}回"
     header: "### 今日の閲覧履歴"
   
   json:

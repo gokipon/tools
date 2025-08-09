@@ -45,42 +45,78 @@ fi
 TARGET_DATE=$(date -v-1d '+%Y-%m-%d')
 log "Collecting Safari history for date: $TARGET_DATE"
 
+# JSON文字列エスケープ関数
+escape_json_string() {
+    local input="$1"
+    # 制御文字と特殊文字をエスケープ
+    printf '%s\n' "$input" | \
+    sed 's/\\/\\\\/g' | \
+    sed 's/"/\\"/g' | \
+    sed 's/	/\\t/g' | \
+    sed 's/$/\\n/g' | tr -d '\n' | \
+    sed 's/\\n$//' | \
+    sed 's/\x08/\\b/g' | \
+    sed 's/\x0C/\\f/g' | \
+    sed 's/\x0D/\\r/g'
+}
+
+# JSON検証関数
+validate_json() {
+    local json_string="$1"
+    echo "$json_string" | jq empty 2>/dev/null
+}
+
 # Safari履歴を取得するSQLクエリ
-# Safariのタイムスタンプは Mac絶対時間 (2001-01-01からの秒数)
+# Safariのタイムスタンプは Mac絶対時間 (2001-01-01からの秒数)  
 # Unix時間に変換するため 978307200 を加算
 SQL_QUERY="
 SELECT 
   strftime('%H:%M', datetime(MIN(visit_time) + 978307200, 'unixepoch', 'localtime')) as first_visit,
-  title,
+  COALESCE(title, '') as title,
   url,
   COUNT(*) as visit_count
 FROM history_visits 
 JOIN history_items ON history_visits.history_item = history_items.id
 WHERE date(datetime(visit_time + 978307200, 'unixepoch', 'localtime')) = '$TARGET_DATE'
-  AND title != ''
-  AND title NOT LIKE '%localhost%'
-  AND title NOT LIKE '%127.0.0.1%'
+  AND url NOT LIKE '%localhost%'
+  AND url NOT LIKE '%127.0.0.1%'
 GROUP BY title, url
 ORDER BY MIN(visit_time) ASC;
 "
 
-# SQLクエリ実行とJSON形式出力
-sqlite3 "$SAFARI_HISTORY_DB" "$SQL_QUERY" | while IFS='|' read -r time title url count; do
-    # エスケープ処理
-    title=$(echo "$title" | sed 's/"/\\"/g')
-    url=$(echo "$url" | sed 's/"/\\"/g')
+# SQLクエリ実行とJSON形式出力（Unit Separator文字を使用）
+sqlite3 -separator $'\x1F' "$SAFARI_HISTORY_DB" "$SQL_QUERY" | while IFS=$'\x1F' read -r time title url count; do
     
-    # JSON出力
-    cat << EOF
+    # visit_countが数値であることを確認
+    if ! [[ "$count" =~ ^[0-9]+$ ]]; then
+        log "WARN: Invalid visit count '$count' for URL '$url', setting to 1"
+        count=1
+    fi
+    
+    # JSON文字列エスケープ
+    escaped_title=$(escape_json_string "$title")
+    escaped_url=$(escape_json_string "$url")
+    
+    # JSON生成
+    json_record=$(cat << EOF
 {
   "timestamp": "$time",
-  "title": "$title",
-  "url": "$url", 
+  "title": "$escaped_title",
+  "url": "$escaped_url",
   "visit_count": $count,
   "source": "safari",
   "date": "$TARGET_DATE"
 }
 EOF
+)
+    
+    # JSON検証
+    if validate_json "$json_record"; then
+        echo "$json_record"
+    else
+        log "WARN: Skipping malformed JSON record for URL: $escaped_url"
+        log "DEBUG: Malformed JSON: $json_record"
+    fi
 done
 
 log "Safari history collection completed successfully"

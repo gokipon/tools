@@ -1,0 +1,41 @@
+# Auto-Browser-Control Dependencies
+
+# Core web automation
+selenium>=4.15.0
+webdriver-manager>=4.0.1
+
+# HTTP requests for Chrome DevTools Protocol
+requests>=2.31.0
+websocket-client>=1.6.0
+
+# Image processing for screenshots
+Pillow>=10.0.0
+
+# JSON and configuration handling
+# (built-in json module used)
+
+# Date and time handling
+# (built-in datetime module used)
+
+# Logging and error handling
+# (built-in logging module used)
+
+# Optional: Enhanced logging (uncomment if needed)
+# colorlog>=6.7.0
+
+# Optional: Better JSON parsing (uncomment if needed)
+# ujson>=5.8.0
+
+# Optional: Async support (uncomment if needed)
+# aiohttp>=3.9.0
+# asyncio>=3.11.0
+
+# Development dependencies (uncomment for development)
+# pytest>=7.4.0
+# pytest-asyncio>=0.21.0
+# black>=23.9.0
+# flake8>=6.0.0
+
+# Documentation dependencies (uncomment for docs)
+# sphinx>=7.2.0
+# sphinx-rtd-theme>=1.3.0

@@ -62,6 +62,14 @@ log "INFO: Starting data collection phase"
 
 # Safari履歴収集（常に有効）
 if [ "$SAFARI_ENABLED" = "true" ]; then
+    # Safari事前操作の実行
+    log "INFO: Executing Safari pre-operation"
+    if "$PROJECT_DIR/collectors/safari-preoperation.sh"; then
+        log "INFO: Safari pre-operation completed successfully"
+    else
+        log "WARN: Safari pre-operation failed, but continuing with history collection"
+    fi
+    
     log "INFO: Collecting Safari history"
     SAFARI_DATA_FILE="$TEMP_DIR/safari_data.json"
     

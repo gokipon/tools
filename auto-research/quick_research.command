@@ -4,7 +4,7 @@
 
 # 設定
 OBSIDIAN_DIARY_PATH="/Users/haruki/Library/Mobile Documents/iCloud~md~obsidian/Documents/I-think-therefore-I-am/diary"
-RESEARCH_TEMPLATE_PATH="/Users/haruki/Library/Mobile Documents/iCloud~md~obsidian/Documents/I-think-therefore-I-am/knowledge/自動実行用/デイリーリサーチ.md"
+RESEARCH_TEMPLATE_PATH="/Users/haruki/Library/Mobile Documents/iCloud~md~obsidian/Documents/I-think-therefore-I-am/pt/デイリーリサーチ.md"
 PERPLEXITY_URL="https://www.perplexity.ai/"
 
 echo "🔍 Daily Research Quick Launch"

@@ -5,10 +5,23 @@
 
 # スクリプトディレクトリを取得
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 VENV_DIR="$SCRIPT_DIR/venv"
 
 # ログファイルにタイムスタンプを出力
 echo "=== Auto Research System Started at $(date) ===" 
+
+# スクリプトディレクトリに移動
+cd "$SCRIPT_DIR" || {
+    echo "Error: Cannot change directory to $SCRIPT_DIR"
+    exit 1
+}
+
+# 環境変数を読み込み
+source "$PROJECT_ROOT/scripts/load-env.sh" || {
+    echo "Error: Failed to load environment variables"
+    exit 1
+}
 
 # venvディレクトリの存在確認
 if [ ! -d "$VENV_DIR" ]; then
@@ -21,12 +34,6 @@ if [ ! -f "$VENV_DIR/bin/python" ]; then
     echo "Error: Python executable not found in virtual environment"
     exit 1
 fi
-
-# スクリプトディレクトリに移動
-cd "$SCRIPT_DIR" || {
-    echo "Error: Cannot change directory to $SCRIPT_DIR"
-    exit 1
-}
 
 # 仮想環境をアクティベート
 echo "Activating virtual environment..."

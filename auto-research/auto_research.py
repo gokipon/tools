@@ -43,8 +43,8 @@ class AutoResearchSystem:
     
     def get_diary_files(self, days_back: int = 1) -> List[str]:
         """Obsidian日記ファイルのパスを取得"""
-        # load-env.shで検証済みの環境変数を使用
-        diary_base_path = self.config.get('USER_INFO_PATH')
+        # 環境変数から直接取得
+        diary_base_path = os.environ.get('USER_INFO_PATH') or self.config.get('USER_INFO_PATH')
         diary_files = []
         
         for i in range(1, days_back + 1):
@@ -84,8 +84,8 @@ class AutoResearchSystem:
     
     def check_prompt_template_exists(self) -> bool:
         """プロンプトテンプレートファイルの存在チェック"""
-        # load-env.shで検証済みの環境変数を使用
-        prompt_file_path = self.config.get('PROMPT_TEMPLATE_PATH')
+        # 環境変数から直接取得
+        prompt_file_path = os.environ.get('PROMPT_TEMPLATE_PATH') or self.config.get('PROMPT_TEMPLATE_PATH')
         
         if not os.path.exists(prompt_file_path):
             self.logger.error(f"Prompt template file not found: {prompt_file_path}")
@@ -95,8 +95,8 @@ class AutoResearchSystem:
     
     def read_prompt_template(self) -> str:
         """プロンプトテンプレートファイルを読み込み"""
-        # load-env.shで検証済みの環境変数を使用
-        prompt_file_path = self.config.get('PROMPT_TEMPLATE_PATH')
+        # 環境変数から直接取得
+        prompt_file_path = os.environ.get('PROMPT_TEMPLATE_PATH') or self.config.get('PROMPT_TEMPLATE_PATH')
         
         try:
             with open(prompt_file_path, 'r', encoding='utf-8') as f:
@@ -189,8 +189,8 @@ class AutoResearchSystem:
             self.logger.error("Invalid API response format")
             return ""
         
-        # load-env.shで検証済みの環境変数を使用
-        output_dir = self.config.get('RESEARCH_REPORT_PATH')
+        # 環境変数から直接取得
+        output_dir = os.environ.get('RESEARCH_REPORT_PATH') or self.config.get('RESEARCH_REPORT_PATH')
         
         # ディレクトリ作成
         os.makedirs(output_dir, exist_ok=True)

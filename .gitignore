@@ -25,3 +25,13 @@ CLAUDE.md
 auto-get-myinfo/requirement.md
 auto-get-myinfo/README.md
 auto-research/requirements.md
+research/providers/__pycache__/__init__.cpython-312.pyc
+.gitignore
+research/providers/__pycache__/factory.cpython-312.pyc
+research/providers/__pycache__/langchain_provider.cpython-312.pyc
+.gitignore
+.gitignore
+research/providers/__pycache__/base.cpython-312.pyc
+.gitignore
+research/providers/__pycache__/perplexity_provider.cpython-312.pyc
+research/config/langchain.env

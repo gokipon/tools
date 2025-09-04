@@ -10,6 +10,8 @@ from typing import Dict, Any, Optional, List
 from dataclasses import dataclass
 from .base import ResearchProvider
 
+from pydantic import BaseModel
+
 try:
     from openai import OpenAI
     OPENAI_AVAILABLE = True
@@ -22,56 +24,95 @@ try:
 except ImportError:
     TAVILY_AVAILABLE = False
 
-@dataclass
-class SubQuery:
-    """Sub-query for multi-agent research"""
+# Pydantic models for structured outputs
+class SubQuery(BaseModel):
     query: str
     priority: int
     domain: str
     context: str = ""
 
-@dataclass
-class AgentResult:
-    """Result from a research agent"""
+class QueryDecomposition(BaseModel):
+    sub_queries: List[SubQuery]
+
+class ResearchContent(BaseModel):
+    current_analysis: str
+    key_findings: str
+    implementation_insights: str
+    future_prospects: str
+
+class AgentResult(BaseModel):
     agent_id: str
     query: str
-    content: str
+    content: ResearchContent
     sources: List[Dict[str, Any]]
     confidence_score: float
     domain: str
 
+class FinalReport(BaseModel):
+    executive_summary: str
+    main_findings: str
+    cross_domain_insights: str
+    actionable_recommendations: str
+    future_research_topics: str
+
 class ResearchSupervisor:
     """Supervisor for multi-agent research coordination"""
     
-    def __init__(self, openai_client, logger):
+    def __init__(self, openai_client, logger, config=None):
         self.client = openai_client
         self.logger = logger
+        self.config = config
+    
+    def _load_prompt_template(self, config_key: str, fallback_content: str = "") -> str:
+        """Load prompt template from file"""
+        prompt_path = self.config.get(config_key)
+        if not prompt_path:
+            self.logger.warning(f"Prompt path {config_key} not found in config, using fallback")
+            return fallback_content
+        
+        try:
+            with open(prompt_path, 'r', encoding='utf-8') as f:
+                content = f.read().strip()
+                self.logger.debug(f"Loaded prompt template from {prompt_path}")
+                return content
+        except Exception as e:
+            self.logger.error(f"Failed to load prompt template {prompt_path}: {e}")
+            return fallback_content
     
     def decompose_query(self, query: str, context: str) -> List[SubQuery]:
         """Decompose main query into sub-queries for parallel processing"""
-        decomposition_prompt = f"""
-        あなたは研究戦略の専門家です。以下のメインクエリと文脈を分析し、並列処理可能な3つの専門的なサブクエリに分解してください。
+        # Load prompt template from file
+        prompt_template = self._load_prompt_template(
+            'QUERY_DECOMPOSITION_PROMPT_PATH',
+            """あなたは研究戦略の専門家です。以下のメインクエリと文脈を分析し、並列処理可能な3つの専門的なサブクエリに分解してください。
 
-        メインクエリ: {query}
+メインクエリ: {query}
+
+文脈: {context}
+
+各サブクエリは以下の形式で出力してください：
+1. [ドメイン名] クエリ内容 (優先度: 1-3)
+2. [ドメイン名] クエリ内容 (優先度: 1-3)  
+3. [ドメイン名] クエリ内容 (優先度: 1-3)
+
+ドメイン例: 技術動向, 市場分析, 学術研究, 実装手法, 将来展望など
+優先度: 1=最重要, 2=重要, 3=補足"""
+        )
         
-        文脈: {context}
-
-        各サブクエリは以下の形式で出力してください：
-        1. [ドメイン名] クエリ内容 (優先度: 1-3)
-        2. [ドメイン名] クエリ内容 (優先度: 1-3)  
-        3. [ドメイン名] クエリ内容 (優先度: 1-3)
-
-        ドメイン例: 技術動向, 市場分析, 学術研究, 実装手法, 将来展望など
-        優先度: 1=最重要, 2=重要, 3=補足
-        """
+        decomposition_prompt = prompt_template.format(query=query, context=context)
         
         try:
-            response = self.client.chat.completions.create(
-                model="gpt-4",
+            response = self.client.beta.chat.completions.parse(
+                model=self.config.get('AZURE_OPENAI_DEPLOYMENT', 'gpt-4'),
                 messages=[{"role": "user", "content": decomposition_prompt}],
-                max_tokens=800,
-                temperature=0.3
+                response_format=QueryDecomposition,
+                max_completion_tokens=int(self.config.get('MAX_COMPLETION_TOKENS', 3000)),
+                temperature=1
             )
+            
+            decomposition = response.choices[0].message.parsed
+            if decomposition and decomposition.sub_queries:
+                return decomposition.sub_queries[:3]  # Limit to 3 sub-queries
             
             content = response.choices[0].message.content
             sub_queries = []
@@ -104,14 +145,13 @@ class ResearchSupervisor:
                             context=context[:500]  # Truncate context
                         ))
             
-            if len(sub_queries) < 3:
-                # Fallback to default decomposition
-                self.logger.warning("Failed to parse sub-queries, using fallback")
-                return [
-                    SubQuery("技術動向と最新の進展", 1, "技術動向", context[:500]),
-                    SubQuery("実用化・実装における課題と解決策", 2, "実装手法", context[:500]),
-                    SubQuery("将来の展望と影響分析", 2, "将来展望", context[:500])
-                ]
+            # Fallback to default decomposition
+            self.logger.warning("Query decomposition failed, using fallback")
+            return [
+                SubQuery(query="技術動向と最新の進展", priority=1, domain="技術動向", context=context[:500]),
+                SubQuery(query="実用化・実装における課題と解決策", priority=2, domain="実装手法", context=context[:500]),
+                SubQuery(query="将来の展望と影響分析", priority=2, domain="将来展望", context=context[:500])
+            ]
             
             return sub_queries[:3]  # Limit to 3 sub-queries
             
@@ -119,36 +159,57 @@ class ResearchSupervisor:
             self.logger.error(f"Error in query decomposition: {e}")
             # Fallback
             return [
-                SubQuery("技術動向と最新の進展", 1, "技術動向", context[:500]),
-                SubQuery("実用化・実装における課題と解決策", 2, "実装手法", context[:500]),
-                SubQuery("将来の展望と影響分析", 2, "将来展望", context[:500])
+                SubQuery(query="技術動向と最新の進展", priority=1, domain="技術動向", context=context[:500]),
+                SubQuery(query="実用化・実装における課題と解決策", priority=2, domain="実装手法", context=context[:500]),
+                SubQuery(query="将来の展望と影響分析", priority=2, domain="将来展望", context=context[:500])
             ]
 
 class ContextCompressor:
     """Context compression for token optimization"""
     
-    def __init__(self, openai_client, logger):
+    def __init__(self, openai_client, logger, config=None):
         self.client = openai_client
         self.logger = logger
+        self.config = config
+    
+    def _load_prompt_template(self, config_key: str, fallback_content: str = "") -> str:
+        """Load prompt template from file"""
+        prompt_path = self.config.get(config_key)
+        if not prompt_path:
+            self.logger.warning(f"Prompt path {config_key} not found in config, using fallback")
+            return fallback_content
+        
+        try:
+            with open(prompt_path, 'r', encoding='utf-8') as f:
+                content = f.read().strip()
+                self.logger.debug(f"Loaded prompt template from {prompt_path}")
+                return content
+        except Exception as e:
+            self.logger.error(f"Failed to load prompt template {prompt_path}: {e}")
+            return fallback_content
     
     def compress_context(self, context: str, threshold: int = 4000) -> str:
         """Compress context if it exceeds threshold"""
         if len(context) <= threshold:
             return context
         
-        compression_prompt = f"""
-        以下の長いコンテンツを{threshold//2}文字程度に要約してください。重要な情報を保持し、研究に必要な文脈を維持してください。
+        # Load prompt template from file
+        prompt_template = self._load_prompt_template(
+            'CONTEXT_COMPRESSION_PROMPT_PATH',
+            """以下の長いコンテンツを{threshold}文字程度に要約してください。重要な情報を保持し、研究に必要な文脈を維持してください。
 
-        コンテンツ:
-        {context}
-        """
+コンテンツ:
+{context}"""
+        )
+        
+        compression_prompt = prompt_template.format(threshold=threshold//2, context=context)
         
         try:
             response = self.client.chat.completions.create(
-                model="gpt-4",
+                model=self.config.get('AZURE_OPENAI_DEPLOYMENT', 'gpt-4'),
                 messages=[{"role": "user", "content": compression_prompt}],
-                max_tokens=1000,
-                temperature=0.1
+                max_completion_tokens=1000,
+                temperature=1
             )
             
             compressed = response.choices[0].message.content
@@ -163,11 +224,28 @@ class ContextCompressor:
 class ResearchAgent:
     """Individual research agent for specialized queries"""
     
-    def __init__(self, agent_id: str, openai_client, search_client, logger):
+    def __init__(self, agent_id: str, openai_client, search_client, logger, config=None):
         self.agent_id = agent_id
         self.openai_client = openai_client
         self.search_client = search_client
         self.logger = logger
+        self.config = config
+    
+    def _load_prompt_template(self, config_key: str, fallback_content: str = "") -> str:
+        """Load prompt template from file"""
+        prompt_path = self.config.get(config_key)
+        if not prompt_path:
+            self.logger.warning(f"Prompt path {config_key} not found in config, using fallback")
+            return fallback_content
+        
+        try:
+            with open(prompt_path, 'r', encoding='utf-8') as f:
+                content = f.read().strip()
+                self.logger.debug(f"Loaded prompt template from {prompt_path}")
+                return content
+        except Exception as e:
+            self.logger.error(f"Failed to load prompt template {prompt_path}: {e}")
+            return fallback_content
     
     def conduct_specialized_research(self, sub_query: SubQuery) -> AgentResult:
         """Conduct specialized research for a sub-query"""
@@ -181,7 +259,7 @@ class ResearchAgent:
             try:
                 search_response = self.search_client.search(
                     query=sub_query.query,
-                    search_depth="deep",
+                    search_depth="advanced",
                     max_results=5
                 )
                 search_results = search_response.get('results', [])
@@ -197,32 +275,57 @@ class ResearchAgent:
             for i, result in enumerate(search_results, 1):
                 search_context += f"{i}. {result.get('title', '')}: {result.get('content', '')[:300]}\n"
         
-        research_prompt = f"""
-        あなたは{sub_query.domain}の専門研究者です。以下の専門的な観点から詳細な分析を行ってください。
+        # Load prompt template from file
+        prompt_template = self._load_prompt_template(
+            'RESEARCH_AGENT_PROMPT_PATH',
+            """あなたは{domain}の専門研究者です。以下の専門的な観点から詳細な分析を行ってください。
 
-        研究クエリ: {sub_query.query}
-        
-        文脈: {sub_query.context}
-        {search_context}
+研究クエリ: {query}
 
-        以下の構造で回答してください：
-        ## 現状分析
-        ## 重要な発見・トレンド
-        ## 実用化への示唆
-        ## 今後の展望
+文脈: {context}
+{search_context}
+
+以下の構造で回答してください：
+## 現状分析
+## 重要な発見・トレンド
+## 実用化への示唆
+## 今後の展望
+
+専門性を活かした深い洞察と具体的な行動提案を含めてください。"""
+        )
         
-        専門性を活かした深い洞察と具体的な行動提案を含めてください。
-        """
+        research_prompt = prompt_template.format(
+            domain=sub_query.domain,
+            query=sub_query.query,
+            context=sub_query.context,
+            search_context=search_context
+        )
         
         try:
-            response = self.openai_client.chat.completions.create(
-                model="gpt-4",
+            response = self.openai_client.beta.chat.completions.parse(
+                model=self.config.get('AZURE_OPENAI_DEPLOYMENT', 'gpt-4') if self.config else 'gpt-4',
                 messages=[{"role": "user", "content": research_prompt}],
-                max_tokens=2000,
-                temperature=0.7
+                response_format=ResearchContent,
+                max_completion_tokens=int(self.config.get('MAX_COMPLETION_TOKENS', 3000)),
+                temperature=1
             )
             
-            content = response.choices[0].message.content
+            research_content = response.choices[0].message.parsed
+            if research_content:
+                content = f"""## 現状分析
+{research_content.current_analysis}
+
+## 重要な発見・トレンド
+{research_content.key_findings}
+
+## 実用化への示唆
+{research_content.implementation_insights}
+
+## 今後の展望
+{research_content.future_prospects}
+"""
+            else:
+                content = "構造化出力の解析に失敗しました"
             
             # Calculate confidence score based on search results and content quality
             confidence_score = 0.7  # Base score
@@ -234,7 +337,12 @@ class ResearchAgent:
             return AgentResult(
                 agent_id=self.agent_id,
                 query=sub_query.query,
-                content=content,
+                content=research_content if research_content else ResearchContent(
+                    current_analysis=content,
+                    key_findings="",
+                    implementation_insights="",
+                    future_prospects=""
+                ),
                 sources=sources,
                 confidence_score=min(confidence_score, 1.0),
                 domain=sub_query.domain
@@ -245,7 +353,12 @@ class ResearchAgent:
             return AgentResult(
                 agent_id=self.agent_id,
                 query=sub_query.query,
-                content=f"研究中にエラーが発生しました: {str(e)}",
+                content=ResearchContent(
+                    current_analysis=f"研究中にエラーが発生しました: {str(e)}",
+                    key_findings="",
+                    implementation_insights="",
+                    future_prospects=""
+                ),
                 sources=[],
                 confidence_score=0.1,
                 domain=sub_query.domain
@@ -271,8 +384,8 @@ class LangChainProvider(ResearchProvider):
         self.supervisor = None
         self.compressor = None
         if self.openai_client:
-            self.supervisor = ResearchSupervisor(self.openai_client, logger)
-            self.compressor = ContextCompressor(self.openai_client, logger)
+            self.supervisor = ResearchSupervisor(self.openai_client, logger, config)
+            self.compressor = ContextCompressor(self.openai_client, logger, config)
         
         # Configuration
         self.max_sub_agents = int(config.get('MAX_SUB_AGENTS', 3))
@@ -291,7 +404,7 @@ class LangChainProvider(ResearchProvider):
             
             self.openai_client = OpenAI(
                 api_key=api_key,
-                base_url=base_url
+                base_url=f"{base_url}openai/v1/"
             )
             self.logger.info("Azure OpenAI client initialized")
             
@@ -311,6 +424,22 @@ class LangChainProvider(ResearchProvider):
             
         except Exception as e:
             self.logger.error(f"Failed to setup search client: {e}")
+    
+    def _load_prompt_template(self, config_key: str, fallback_content: str = "") -> str:
+        """Load prompt template from file"""
+        prompt_path = self.config.get(config_key)
+        if not prompt_path:
+            self.logger.warning(f"Prompt path {config_key} not found in config, using fallback")
+            return fallback_content
+        
+        try:
+            with open(prompt_path, 'r', encoding='utf-8') as f:
+                content = f.read().strip()
+                self.logger.debug(f"Loaded prompt template from {prompt_path}")
+                return content
+        except Exception as e:
+            self.logger.error(f"Failed to load prompt template {prompt_path}: {e}")
+            return fallback_content
     
     def get_provider_name(self) -> str:
         return "langchain"
@@ -366,7 +495,7 @@ class LangChainProvider(ResearchProvider):
                     future_to_query = {}
                     
                     for i, sub_query in enumerate(sub_queries[:self.max_sub_agents]):
-                        agent = ResearchAgent(f"agent_{i+1}", self.openai_client, self.search_client, self.logger)
+                        agent = ResearchAgent(f"agent_{i+1}", self.openai_client, self.search_client, self.logger, self.config)
                         future = executor.submit(agent.conduct_specialized_research, sub_query)
                         future_to_query[future] = sub_query
                     
@@ -378,7 +507,7 @@ class LangChainProvider(ResearchProvider):
                             self.logger.error(f"Agent execution error: {e}")
             else:
                 # Single agent execution
-                agent = ResearchAgent("agent_1", self.openai_client, self.search_client, self.logger)
+                agent = ResearchAgent("agent_1", self.openai_client, self.search_client, self.logger, self.config)
                 result = agent.conduct_specialized_research(sub_queries[0])
                 agent_results.append(result)
             
@@ -412,48 +541,90 @@ class LangChainProvider(ResearchProvider):
         if len(agent_results) == 1:
             return agent_results[0].content
         
-        # Multi-agent synthesis
-        synthesis_prompt = f"""
-        以下の複数の専門エージェントによる研究結果を統合し、包括的で洞察に富んだ最終レポートを作成してください。
-
-        エージェント研究結果:
-        """
+        # Prepare agent results content
+        agent_results_text = ""
         
         for i, result in enumerate(agent_results, 1):
-            synthesis_prompt += f"""
+            # Extract content from structured result
+            if isinstance(result.content, ResearchContent):
+                content_text = f"""## 現状分析
+{result.content.current_analysis}
+
+## 重要な発見・トレンド
+{result.content.key_findings}
+
+## 実用化への示唆
+{result.content.implementation_insights}
+
+## 今後の展望
+{result.content.future_prospects}
+"""
+            else:
+                content_text = str(result.content)
+            
+            agent_results_text += f"""
         
-        ## エージェント{i} - {result.domain}分野 (信頼度: {result.confidence_score:.2f})
-        研究クエリ: {result.query}
+## エージェント{i} - {result.domain}分野 (信頼度: {result.confidence_score:.2f})
+研究クエリ: {result.query}
+
+{content_text}
+
+---
+"""
         
-        {result.content}
+        # Load prompt template from file
+        prompt_template = self._load_prompt_template(
+            'SYNTHESIS_PROMPT_PATH',
+            """以下の複数の専門エージェントによる研究結果を統合し、包括的で洞察に富んだ最終レポートを作成してください。
+
+エージェント研究結果:
+{agent_results}
+
+上記の結果を統合して、以下の構造で包括的なレポートを作成してください：
+
+# 統合研究レポート
+
+## エグゼクティブサマリー
+## 主要な発見事項
+## 分野横断的な洞察
+## 実装・実践への提言
+## 今後の研究課題
+
+各エージェントの専門知識を活かし、相互の関連性や矛盾点も明記してください。"""
+        )
         
-        ---
-        """
-        
-        synthesis_prompt += """
-        
-        上記の結果を統合して、以下の構造で包括的なレポートを作成してください：
-        
-        # 統合研究レポート
-        
-        ## エグゼクティブサマリー
-        ## 主要な発見事項
-        ## 分野横断的な洞察
-        ## 実装・実践への提言
-        ## 今後の研究課題
-        
-        各エージェントの専門知識を活かし、相互の関連性や矛盾点も明記してください。
-        """
+        synthesis_prompt = prompt_template.format(agent_results=agent_results_text)
         
         try:
-            response = self.openai_client.chat.completions.create(
-                model="gpt-4",
+            response = self.openai_client.beta.chat.completions.parse(
+                model=self.config.get('AZURE_OPENAI_DEPLOYMENT', 'gpt-4'),
                 messages=[{"role": "user", "content": synthesis_prompt}],
-                max_tokens=3000,
-                temperature=0.5
+                response_format=FinalReport,
+                max_completion_tokens=int(self.config.get('MAX_COMPLETION_TOKENS', 3000)),
+                temperature=1
             )
             
-            synthesized_content = response.choices[0].message.content
+            final_report = response.choices[0].message.parsed
+            if final_report:
+                synthesized_content = f"""# 統合研究レポート
+
+## エグゼクティブサマリー
+{final_report.executive_summary}
+
+## 主要な発見事項
+{final_report.main_findings}
+
+## 分野横断的な洞察
+{final_report.cross_domain_insights}
+
+## 実装・実践への提言
+{final_report.actionable_recommendations}
+
+## 今後の研究課題
+{final_report.future_research_topics}
+"""
+            else:
+                synthesized_content = "統合レポートの生成に失敗しました"
             
             # Add agent performance summary
             agent_summary = "\n\n## 研究実行詳細\n\n"
@@ -468,5 +639,20 @@ class LangChainProvider(ResearchProvider):
             # Fallback: simple concatenation
             fallback_content = "# 統合研究レポート\n\n"
             for i, result in enumerate(agent_results, 1):
-                fallback_content += f"## {result.domain}分野の分析\n\n{result.content}\n\n"
+                if isinstance(result.content, ResearchContent):
+                    content_text = f"""## 現状分析
+{result.content.current_analysis}
+
+## 重要な発見・トレンド
+{result.content.key_findings}
+
+## 実用化への示唆
+{result.content.implementation_insights}
+
+## 今後の展望
+{result.content.future_prospects}
+"""
+                else:
+                    content_text = str(result.content)
+                fallback_content += f"## {result.domain}分野の分析\n\n{content_text}\n\n"
             return fallback_content

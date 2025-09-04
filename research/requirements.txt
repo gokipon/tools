@@ -1,0 +1,21 @@
+# Phase 1: Base dependencies
+requests>=2.31.0
+pathlib>=1.0.1
+
+# Phase 1: Command-line interface
+argparse>=1.4.0
+
+# Phase 2: Azure OpenAI integration
+openai>=1.0.0
+
+# Phase 3: Search API integration
+tavily-python>=0.3.0
+
+# Phase 4: Multi-agent coordination (optional - advanced features)
+# langchain>=0.2.0
+# langgraph>=0.1.0
+
+# Development dependencies (optional)
+# pytest>=7.0.0
+# black>=22.0.0
+# flake8>=5.0.0

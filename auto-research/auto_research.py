@@ -1,38 +1,87 @@
 #!/usr/bin/env python3
 """
-自動リサーチシステム
-Obsidian日記から注目ワードを抽出し、Perplexity APIでリサーチを実行して結果を保存する
+自動リサーチシステム - Provider パターン版
+Obsidian日記から注目ワードを抽出し、選択されたProviderでリサーチを実行して結果を保存する
+
+支援するProvider:
+- Perplexity API (既存)
+- LangChain + Azure OpenAI (新規: Phase 2-4 multi-agent system)
 """
 
 import os
-import requests
-import json
+import argparse
 from datetime import datetime, timedelta
 import logging
 import re
 from typing import List, Optional, Dict
 
+from providers.factory import ProviderFactory
+from providers.base import ResearchProvider
+
 class AutoResearchSystem:
-    def __init__(self, config_path: str = ".env"):
-        """初期化"""
-        self.config = self._load_config(config_path)
-        self.setup_logging()
+    def __init__(self, provider_type: str = "perplexity", config_path: str = None, debug: bool = False):
+        """
+        初期化
         
-    def _load_config(self, config_path: str) -> Dict[str, str]:
-        """設定ファイル読み込み"""
+        Args:
+            provider_type: 使用するプロバイダー ('perplexity' or 'langchain')
+            config_path: カスタム設定ファイルのパス
+            debug: デバッグモード
+        """
+        self.provider_type = provider_type
+        self.debug = debug
+        self.config = self._load_hierarchical_config(config_path)
+        self.setup_logging()
+        self.provider = self._create_provider()
+        
+    def _load_hierarchical_config(self, custom_config_path: str = None) -> Dict[str, str]:
+        """
+        階層的設定読み込み (CLI > custom.env > provider.env > .env > default)
+        """
         config = {}
+        
+        # 1. Default .env file
+        self._load_config_file(".env", config)
+        
+        # 2. Provider-specific config
+        provider_config_path = f"config/{self.provider_type}.env"
+        if os.path.exists(provider_config_path):
+            self._load_config_file(provider_config_path, config)
+        
+        # 3. Custom config file if specified
+        if custom_config_path and os.path.exists(custom_config_path):
+            self._load_config_file(custom_config_path, config)
+        
+        # 4. Environment variables override
+        for key in config.keys():
+            env_value = os.getenv(key)
+            if env_value:
+                config[key] = env_value
+        
+        return config
+    
+    def _load_config_file(self, config_path: str, config: Dict[str, str]):
+        """単一設定ファイル読み込み"""
         if os.path.exists(config_path):
-            with open(config_path, 'r') as f:
+            with open(config_path, 'r', encoding='utf-8') as f:
                 for line in f:
                     if '=' in line and not line.startswith('#'):
                         key, value = line.strip().split('=', 1)
                         config[key] = value.strip('"\'')
-        return config
+    
+    def _create_provider(self) -> ResearchProvider:
+        """プロバイダー作成"""
+        try:
+            return ProviderFactory.create_provider(self.provider_type, self.config, self.logger)
+        except ValueError as e:
+            self.logger.error(f"Provider creation failed: {e}")
+            raise
     
     def setup_logging(self):
         """ログ設定"""
+        log_level = logging.DEBUG if self.debug else logging.INFO
         logging.basicConfig(
-            level=logging.INFO,
+            level=log_level,
             format='%(asctime)s - %(levelname)s - %(message)s',
             handlers=[
                 logging.FileHandler('auto_research.log'),
@@ -40,6 +89,7 @@ class AutoResearchSystem:
             ]
         )
         self.logger = logging.getLogger(__name__)
+        self.logger.info(f"Using provider: {self.provider_type}")
     
     def get_diary_files(self, days_back: int = 1) -> List[str]:
         """Obsidian日記ファイルのパスを取得"""
@@ -129,50 +179,15 @@ class AutoResearchSystem:
         
         return combined_prompt
     
-    def call_perplexity_api(self, prompt: str) -> Optional[str]:
-        """Perplexity APIを呼び出し"""
-        api_key = self.config.get('PERPLEXITY_API_KEY')
-        if not api_key:
-            self.logger.error("PERPLEXITY_API_KEY not found in config")
-            return None
+    def conduct_research(self, prompt: str) -> Optional[Dict]:
+        """選択されたプロバイダーでリサーチを実行"""
+        self.logger.info(f"Conducting research with {self.provider.get_provider_name()} provider...")
         
-        url = "https://api.perplexity.ai/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json"
-        }
+        if self.debug:
+            self.logger.debug(f"Prompt length: {len(prompt)} characters")
+            self.logger.debug(f"First 200 chars of prompt: {prompt[:200]}...")
         
-        data = {
-            "model": "sonar-deep-research",
-            "messages": [
-                {"role": "user", "content": prompt}
-            ],
-            "reasoning_effort": "medium",
-            "temperature": 0.7,
-            "max_tokens": 8192
-        }
-        
-        try:
-            self.logger.info("Calling Perplexity API...")
-            response = requests.post(url, headers=headers, json=data, timeout=1200)
-            response.raise_for_status()
-            
-            result = response.json()
-            if 'choices' in result and len(result['choices']) > 0:
-                content = result['choices'][0]['message']['content']
-                # search_resultsも一緒に返す
-                search_results = result.get('search_results', [])
-                return {'content': content, 'search_results': search_results}
-            else:
-                self.logger.error("Unexpected API response format")
-                return None
-                
-        except requests.exceptions.RequestException as e:
-            self.logger.error(f"API request failed: {e}")
-            return None
-        except json.JSONDecodeError as e:
-            self.logger.error(f"JSON decode error: {e}")
-            return None
+        return self.provider.conduct_research(prompt)
     
     def save_research_report(self, api_response) -> str:
         """リサーチレポートをMarkdownファイルとして保存"""
@@ -181,10 +196,16 @@ class AutoResearchSystem:
             # 文字列の場合（後方互換性）
             content = api_response
             search_results = []
+            metadata = {}
         elif isinstance(api_response, dict):
             # 辞書の場合（新形式）
             content = api_response.get('content', '')
             search_results = api_response.get('search_results', [])
+            metadata = {
+                'agent_results': api_response.get('agent_results', 1),
+                'confidence_score': api_response.get('confidence_score', 0.0),
+                'provider': self.provider.get_provider_name()
+            }
         else:
             self.logger.error("Invalid API response format")
             return ""
@@ -224,18 +245,29 @@ class AutoResearchSystem:
                 if url:
                     citation_list += f"{i}. [{title}]({url})\n"
         
+        # メタデータセクション作成
+        metadata_section = ""
+        if metadata:
+            metadata_section = f"""
+## 生成メタデータ
+
+- **プロバイダー**: {metadata.get('provider', 'Unknown')}
+- **エージェント数**: {metadata.get('agent_results', 1)}
+- **信頼度スコア**: {metadata.get('confidence_score', 0.0):.2f}
+"""
+
         # Markdownコンテンツ作成
         markdown_content = f"""# 自動リサーチレポート - {today}
 
 生成日時: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-
+{metadata_section}
 ---
 
 {content}{citation_list}
 
 ---
 
-*このレポートは自動リサーチシステムによって生成されました*
+*このレポートは自動リサーチシステム (Provider: {self.provider.get_provider_name()}) によって生成されました*
 """
         
         try:
@@ -274,10 +306,10 @@ class AutoResearchSystem:
             # 4. プロンプト生成
             prompt = self.generate_research_prompt(diary_content)
             
-            # 5. API呼び出し
-            research_result = self.call_perplexity_api(prompt)
+            # 5. リサーチ実行
+            research_result = self.conduct_research(prompt)
             if not research_result:
-                self.logger.error("Failed to get research result from API")
+                self.logger.error(f"Failed to get research result from {self.provider.get_provider_name()} provider")
                 return
             
             # 6. レポート保存
@@ -290,10 +322,84 @@ class AutoResearchSystem:
         except Exception as e:
             self.logger.error(f"Unexpected error in main process: {e}")
 
+def create_argument_parser():
+    """コマンドライン引数パーサー作成"""
+    parser = argparse.ArgumentParser(
+        description='自動リサーチシステム - Provider パターン版',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+使用例:
+  python auto_research.py                                    # デフォルト (Perplexity)
+  python auto_research.py --provider perplexity             # Perplexity明示
+  python auto_research.py --provider langchain              # LangChain + Azure OpenAI
+  python auto_research.py -p langchain --config custom.env  # カスタム設定
+  python auto_research.py --list-providers                  # 利用可能プロバイダー一覧
+  python auto_research.py --debug                           # デバッグモード
+
+プロバイダー:
+  perplexity: Perplexity API (既存システム)
+  langchain:  LangChain + Azure OpenAI + Multi-agent system (Phase 2-4)
+        """
+    )
+    
+    parser.add_argument(
+        '--provider', '-p',
+        choices=['perplexity', 'langchain'],
+        default='perplexity',
+        help='使用するリサーチプロバイダー (default: perplexity)'
+    )
+    
+    parser.add_argument(
+        '--config', '-c',
+        type=str,
+        help='カスタム設定ファイルのパス'
+    )
+    
+    parser.add_argument(
+        '--debug',
+        action='store_true',
+        help='デバッグモードでログ出力を詳細化'
+    )
+    
+    parser.add_argument(
+        '--list-providers',
+        action='store_true',
+        help='利用可能なプロバイダー一覧を表示'
+    )
+    
+    return parser
+
 def main():
     """メイン関数"""
-    system = AutoResearchSystem()
-    system.run()
+    parser = create_argument_parser()
+    args = parser.parse_args()
+    
+    # プロバイダー一覧表示
+    if args.list_providers:
+        available_providers = ProviderFactory.get_available_providers()
+        print("利用可能なリサーチプロバイダー:")
+        for provider in available_providers:
+            print(f"  - {provider}")
+        return
+    
+    try:
+        # システム初期化
+        system = AutoResearchSystem(
+            provider_type=args.provider,
+            config_path=args.config,
+            debug=args.debug
+        )
+        
+        # リサーチ実行
+        system.run()
+        
+    except KeyboardInterrupt:
+        print("\n操作が中断されました。")
+    except Exception as e:
+        print(f"エラーが発生しました: {e}")
+        if args.debug:
+            import traceback
+            traceback.print_exc()
 
 if __name__ == "__main__":
     main()

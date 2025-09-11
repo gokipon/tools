@@ -101,6 +101,10 @@ class ResearchSupervisor:
         
         decomposition_prompt = prompt_template.format(query=query, context=context)
         
+        self.logger.info(f"=== PHASE 1: Query Decomposition ===")
+        self.logger.info(f"Prompt template path: {self.config.get('QUERY_DECOMPOSITION_PROMPT_PATH', 'Using fallback')}")
+        self.logger.debug(f"Decomposition prompt (first 500 chars): {decomposition_prompt[:500]}...")
+        
         try:
             response = self.client.beta.chat.completions.parse(
                 model=self.config.get('AZURE_OPENAI_DEPLOYMENT', 'gpt-4'),
@@ -249,7 +253,9 @@ class ResearchAgent:
     
     def conduct_specialized_research(self, sub_query: SubQuery) -> AgentResult:
         """Conduct specialized research for a sub-query"""
-        self.logger.info(f"Agent {self.agent_id} researching: {sub_query.query}")
+        self.logger.info(f"=== PHASE 2: Agent {self.agent_id} Research ({sub_query.domain}) ===")
+        self.logger.info(f"Research query: {sub_query.query}")
+        self.logger.debug(f"Context (first 300 chars): {sub_query.context[:300]}...")
         
         # Phase 3: Search integration
         search_results = []
@@ -300,6 +306,10 @@ class ResearchAgent:
             context=sub_query.context,
             search_context=search_context
         )
+        
+        self.logger.info(f"Agent {self.agent_id} prompt template path: {self.config.get('RESEARCH_AGENT_PROMPT_PATH', 'Using fallback')}")
+        self.logger.debug(f"Agent {self.agent_id} research prompt (first 500 chars): {research_prompt[:500]}...")
+        self.logger.info(f"Agent {self.agent_id} found {len(search_results)} search results")
         
         try:
             response = self.openai_client.beta.chat.completions.parse(
@@ -482,6 +492,9 @@ class LangChainProvider(ResearchProvider):
             # Phase 4: Query decomposition
             if self.supervisor:
                 sub_queries = self.supervisor.decompose_query(prompt, prompt[:1000])
+                if not sub_queries:
+                    self.logger.error("Query decomposition failed - stopping research to prevent API costs")
+                    return None
             else:
                 # Fallback to single query
                 sub_queries = [SubQuery(prompt, 1, "general", prompt[:500])]
@@ -534,18 +547,18 @@ class LangChainProvider(ResearchProvider):
             return None
     
     def _synthesize_agent_results(self, agent_results: List[AgentResult]) -> str:
-        """Synthesize multiple agent results into final report"""
+        """Synthesize agent results using original prompt template"""
         if not agent_results:
             return "研究結果の統合に失敗しました。"
         
-        if len(agent_results) == 1:
-            return agent_results[0].content
+        self.logger.info(f"=== PHASE 3: Final Synthesis ===")
+        self.logger.info(f"Synthesizing {len(agent_results)} agent results")
+        for i, result in enumerate(agent_results, 1):
+            self.logger.info(f"Agent {i}: {result.domain} (confidence: {result.confidence_score:.2f})")
         
         # Prepare agent results content
         agent_results_text = ""
-        
         for i, result in enumerate(agent_results, 1):
-            # Extract content from structured result
             if isinstance(result.content, ResearchContent):
                 content_text = f"""## 現状分析
 {result.content.current_analysis}
@@ -562,97 +575,46 @@ class LangChainProvider(ResearchProvider):
             else:
                 content_text = str(result.content)
             
-            agent_results_text += f"""
-        
-## エージェント{i} - {result.domain}分野 (信頼度: {result.confidence_score:.2f})
+            agent_results_text += f"""## エージェント{i} - {result.domain}分野
 研究クエリ: {result.query}
 
 {content_text}
 
 ---
+
 """
         
-        # Load prompt template from file
-        prompt_template = self._load_prompt_template(
-            'SYNTHESIS_PROMPT_PATH',
-            """以下の複数の専門エージェントによる研究結果を統合し、包括的で洞察に富んだ最終レポートを作成してください。
-
-エージェント研究結果:
-{agent_results}
-
-上記の結果を統合して、以下の構造で包括的なレポートを作成してください：
-
-# 統合研究レポート
-
-## エグゼクティブサマリー
-## 主要な発見事項
-## 分野横断的な洞察
-## 実装・実践への提言
-## 今後の研究課題
-
-各エージェントの専門知識を活かし、相互の関連性や矛盾点も明記してください。"""
-        )
+        # Use original prompt template + agent results
+        original_prompt_path = self.config.get('PROMPT_TEMPLATE_PATH')
+        self.logger.info(f"Original prompt template path: {original_prompt_path}")
         
-        synthesis_prompt = prompt_template.format(agent_results=agent_results_text)
+        if original_prompt_path and os.path.exists(original_prompt_path):
+            try:
+                with open(original_prompt_path, 'r', encoding='utf-8') as f:
+                    original_template = f.read()
+                self.logger.debug(f"Original template (first 300 chars): {original_template[:300]}...")
+                synthesis_prompt = original_template.replace("# 日記情報", f"# エージェント研究結果\n\n{agent_results_text}")
+                self.logger.info("Successfully replaced diary section with agent results")
+            except Exception as e:
+                self.logger.error(f"Failed to read original prompt template: {e}")
+                synthesis_prompt = f"最終成果物を作成：\n\n{agent_results_text}"
+        else:
+            self.logger.warning("Original prompt template not found, using fallback")
+            synthesis_prompt = f"最終成果物を作成：\n\n{agent_results_text}"
+        
+        self.logger.debug(f"Final synthesis prompt (first 500 chars): {synthesis_prompt[:500]}...")
         
         try:
-            response = self.openai_client.beta.chat.completions.parse(
+            response = self.openai_client.chat.completions.create(
                 model=self.config.get('AZURE_OPENAI_DEPLOYMENT', 'gpt-4'),
                 messages=[{"role": "user", "content": synthesis_prompt}],
-                response_format=FinalReport,
                 max_completion_tokens=int(self.config.get('MAX_COMPLETION_TOKENS', 3000)),
                 temperature=1
             )
             
-            final_report = response.choices[0].message.parsed
-            if final_report:
-                synthesized_content = f"""# 統合研究レポート
-
-## エグゼクティブサマリー
-{final_report.executive_summary}
-
-## 主要な発見事項
-{final_report.main_findings}
-
-## 分野横断的な洞察
-{final_report.cross_domain_insights}
-
-## 実装・実践への提言
-{final_report.actionable_recommendations}
-
-## 今後の研究課題
-{final_report.future_research_topics}
-"""
-            else:
-                synthesized_content = "統合レポートの生成に失敗しました"
-            
-            # Add agent performance summary
-            agent_summary = "\n\n## 研究実行詳細\n\n"
-            agent_summary += f"- 実行エージェント数: {len(agent_results)}\n"
-            agent_summary += f"- 平均信頼度スコア: {sum(r.confidence_score for r in agent_results) / len(agent_results):.2f}\n"
-            agent_summary += "- 専門分野: " + ", ".join([r.domain for r in agent_results]) + "\n"
-            
-            return synthesized_content + agent_summary
+            return response.choices[0].message.content
             
         except Exception as e:
             self.logger.error(f"Synthesis failed: {e}")
             # Fallback: simple concatenation
-            fallback_content = "# 統合研究レポート\n\n"
-            for i, result in enumerate(agent_results, 1):
-                if isinstance(result.content, ResearchContent):
-                    content_text = f"""## 現状分析
-{result.content.current_analysis}
-
-## 重要な発見・トレンド
-{result.content.key_findings}
-
-## 実用化への示唆
-{result.content.implementation_insights}
-
-## 今後の展望
-{result.content.future_prospects}
-"""
-                else:
-                    content_text = str(result.content)
-                fallback_content += f"## {result.domain}分野の分析\n\n{content_text}\n\n"
-            return fallback_content
+            return agent_results_text

@@ -158,24 +158,7 @@ class AutoResearchSystem:
     def generate_research_prompt(self, diary_content: str) -> str:
         """日記内容とプロンプトテンプレートからリサーチプロンプトを生成"""
         prompt_template = self.read_prompt_template()
-        
-        if not prompt_template:
-            # フォールバック用のデフォルトプロンプト
-            prompt_template = """
-私の情報をもとに以下の観点で情報を収集してください：
-- 私が抱えるコアな課題（ペイン）に効く
-- 私が想定している社会の未来像における、直近の進捗が分かる
-- 私が持つ興味に刺さる
-その上で行動を提示してください。
-"""
-        
-        combined_prompt = f"""
-{prompt_template}
-
-## 私の最近の日記内容（情報源）：
-{diary_content}
-
-"""
+        combined_prompt = f"{prompt_template}\n\n# 日記情報\n\n{diary_content}"
         
         return combined_prompt
     
@@ -305,6 +288,11 @@ class AutoResearchSystem:
             
             # 4. プロンプト生成
             prompt = self.generate_research_prompt(diary_content)
+            
+            if self.debug:
+                self.logger.debug("=== GENERATED PROMPT (FULL) ===")
+                self.logger.debug(prompt)
+                self.logger.debug("=== END PROMPT ===")
             
             # 5. リサーチ実行
             research_result = self.conduct_research(prompt)

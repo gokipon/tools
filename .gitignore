@@ -35,3 +35,5 @@ research/providers/__pycache__/base.cpython-312.pyc
 .gitignore
 research/providers/__pycache__/perplexity_provider.cpython-312.pyc
 research/config/langchain.env
+
+*.pyc

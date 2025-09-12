@@ -49,17 +49,17 @@ def test_config_loading():
     """設定ファイル読み込みテスト"""
     print("🧪 設定ファイル読み込みテスト...")
     
-    # 一時的な設定ファイルを作成
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-        f.write('{"test": {"value": "success"}}')
-        temp_config = f.name
+    # 共通設定システムのテスト
+    config = RadioGeneratorConfig()
     
-    try:
-        config = RadioGeneratorConfig(temp_config)
-        assert config.get('test.value') == 'success', "設定値の読み込みが失敗"
-        print("✅ 設定ファイル読み込みテスト完了")
-    finally:
-        os.unlink(temp_config)
+    # 環境変数から設定が読み込めることを確認
+    azure_config = config.get('azure_openai.api_key_env')
+    assert azure_config is not None, "Azure OpenAI設定の読み込みが失敗"
+    
+    obsidian_path = config.get('paths.output_base')
+    assert obsidian_path is not None, "出力パス設定の読み込みが失敗"
+    
+    print("✅ 設定ファイル読み込みテスト完了")
 
 
 def test_file_operations():
@@ -80,15 +80,22 @@ def test_file_operations():
     
     # 出力ディレクトリ作成テスト（一時ディレクトリを使用）
     with tempfile.TemporaryDirectory() as temp_dir:
-        # 設定を一時的に変更
-        original_base = config.config['paths']['output_base']
-        config.config['paths']['output_base'] = temp_dir
+        # 環境変数を一時的に変更
+        original_radio_path = os.environ.get('RADIO_OUTPUT_PATH')
+        os.environ['RADIO_OUTPUT_PATH'] = temp_dir
         
-        output_dir = file_manager.create_output_directory("2025-09-07")
-        assert output_dir.exists(), "出力ディレクトリが作成されていない"
-        
-        # 設定を元に戻す
-        config.config['paths']['output_base'] = original_base
+        try:
+            # 新しい設定インスタンスを作成（環境変数変更を反映）
+            test_config = RadioGeneratorConfig()
+            test_file_manager = FileManager(test_config)
+            
+            output_dir = test_file_manager.create_output_directory("2025-09-07")
+            assert output_dir.exists(), "出力ディレクトリが作成されていない"
+            
+        finally:
+            # 設定を元に戻す
+            if original_radio_path:
+                os.environ['RADIO_OUTPUT_PATH'] = original_radio_path
     
     print("✅ ファイル操作テスト完了")
 
@@ -114,50 +121,42 @@ def test_full_system_flow():
 """
     
     with tempfile.TemporaryDirectory() as temp_dir:
-        # テスト用の設定を作成
-        test_config = {
-            "azure_openai": {
-                "api_key_env": "AZURE_OPENAI_API_KEY",
-                "base_url": "https://test.openai.azure.com/openai/v1/",
-                "model": "gpt-4o"
-            },
-            "paths": {
-                "research_report": f"{temp_dir}/{{date}}.md",
-                "output_base": temp_dir
-            },
-            "settings": {
-                "chapter_marker": "#automation/research-chapter",
-                "log_level": "INFO"
-            }
-        }
+        # 環境変数を一時的に変更してテスト用のパスを設定
+        original_research_path = os.environ.get('RESEARCH_REPORT_PATH')
+        original_radio_path = os.environ.get('RADIO_OUTPUT_PATH')
         
-        # 設定ファイルを作成
-        config_path = os.path.join(temp_dir, "test_config.json")
-        import json
-        with open(config_path, 'w', encoding='utf-8') as f:
-            json.dump(test_config, f, ensure_ascii=False, indent=2)
+        os.environ['RESEARCH_REPORT_PATH'] = temp_dir
+        os.environ['RADIO_OUTPUT_PATH'] = temp_dir
         
-        # テストレポートファイルを作成
-        report_path = os.path.join(temp_dir, "2025-09-07.md")
-        with open(report_path, 'w', encoding='utf-8') as f:
-            f.write(sample_report)
-        
-        # システムの初期化とテスト
-        config = RadioGeneratorConfig(config_path)
-        
-        # 章抽出テスト
-        extractor = ChapterExtractor(config.get('settings.chapter_marker'))
-        chapters = extractor.extract_chapters(sample_report)
-        assert len(chapters) == 3, f"期待: 3章, 実際: {len(chapters)}章"
-        
-        # ファイル読み込みテスト
-        file_manager = FileManager(config)
-        read_content = file_manager.read_research_report("2025-09-07")
-        assert sample_report in read_content, "レポート内容の読み込みが失敗"
-        
-        # 出力ディレクトリ作成テスト
-        output_dir = file_manager.create_output_directory("2025-09-07")
-        assert output_dir.exists(), "出力ディレクトリの作成が失敗"
+        try:
+            # テストレポートファイルを作成
+            report_path = os.path.join(temp_dir, "2025-09-07.md")
+            with open(report_path, 'w', encoding='utf-8') as f:
+                f.write(sample_report)
+            
+            # システムの初期化とテスト
+            config = RadioGeneratorConfig()
+            
+            # 章抽出テスト
+            extractor = ChapterExtractor(config.get('settings.chapter_marker'))
+            chapters = extractor.extract_chapters(sample_report)
+            assert len(chapters) == 3, f"期待: 3章, 実際: {len(chapters)}章"
+            
+            # ファイル読み込みテスト
+            file_manager = FileManager(config)
+            read_content = file_manager.read_research_report("2025-09-07")
+            assert sample_report in read_content, "レポート内容の読み込みが失敗"
+            
+            # 出力ディレクトリ作成テスト
+            output_dir = file_manager.create_output_directory("2025-09-07")
+            assert output_dir.exists(), "出力ディレクトリの作成が失敗"
+            
+        finally:
+            # 環境変数を元に戻す
+            if original_research_path:
+                os.environ['RESEARCH_REPORT_PATH'] = original_research_path
+            if original_radio_path:
+                os.environ['RADIO_OUTPUT_PATH'] = original_radio_path
         
     print("✅ システム全体フローテスト完了")
 

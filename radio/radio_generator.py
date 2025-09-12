@@ -8,71 +8,60 @@ for each chapter using Azure OpenAI API with conversation history management.
 
 import os
 import re
-import json
 import logging
+import sys
 from datetime import datetime
 from pathlib import Path
-from typing import List, Dict, Optional, Tuple
-import time
-import requests
-from openai import OpenAI
+from typing import List, Dict, Optional
+
+# 共通ライブラリを追加
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from shared.config_loader import get_config
+from shared.api_clients.azure_openai_client import AzureOpenAIClient
+from shared.api_clients.line_notify_client import LineNotifyClient
+from shared.utils.file_utils import sanitize_filename, ensure_directory, format_date_for_path, get_file_with_date_placeholder
 
 
 class RadioGeneratorConfig:
-    """Configuration management for the radio generator."""
+    """Configuration management for the radio generator - now using common config."""
     
-    def __init__(self, config_file: str = "radio_config.json"):
-        self.config_file = config_file
-        self.config = self.load_config()
-    
-    def load_config(self) -> Dict:
-        """Load configuration from file or create default."""
-        default_config = {
-            "azure_openai": {
-                "api_key_env": "AZURE_OPENAI_API_KEY",
-                "base_url": "https://YOUR-RESOURCE-NAME.openai.azure.com/openai/v1/",
-                "model": "gpt-4o"
-            },
-            "line": {
-                "token_env": "LINE_NOTIFY_TOKEN",
-                "api_url": "https://notify-api.line.me/api/notify"
-            },
-            "paths": {
-                "research_report": "/Users/haruki/Library/Mobile Documents/iCloud~md~obsidian/Documents/I-think-therefore-I-am/artifact/research-report/{date}.md",
-                "prompt_template": "/Users/haruki/Library/Mobile Documents/iCloud~md~obsidian/Documents/I-think-therefore-I-am/pt/ラジオ原稿作り.md",
-                "output_base": "/Users/haruki/Library/Mobile Documents/iCloud~md~obsidian/Documents/I-think-therefore-I-am/artifact/radio"
-            },
-            "settings": {
-                "chapter_marker": "#automation/research-chapter",
-                "api_delay": 2,
-                "max_retries": 3,
-                "log_level": "INFO"
-            }
+    def __init__(self, config_file: str = None):
+        """
+        Initialize with common configuration system
+        
+        Args:
+            config_file: Legacy parameter (ignored, kept for compatibility)
+        """
+        self.common_config = get_config()
+        
+    def get(self, key_path: str, default=None):
+        """Get configuration value using dot notation."""
+        # Map legacy keys to new common config keys
+        key_mappings = {
+            'azure_openai.api_key_env': 'AZURE_OPENAI_API_KEY',
+            'azure_openai.base_url': 'AZURE_OPENAI_BASE_URL',
+            'azure_openai.model': 'AZURE_OPENAI_DEPLOYMENT',
+            'line.token_env': 'LINE_NOTIFY_TOKEN',
+            'line.api_url': 'LINE_NOTIFY_API_URL',
+            'paths.research_report': 'RESEARCH_REPORT_PATH',
+            'paths.prompt_template': 'RADIO_PROMPT_TEMPLATE_PATH', 
+            'paths.output_base': 'RADIO_OUTPUT_PATH',
+            'settings.chapter_marker': 'CHAPTER_MARKER',
+            'settings.api_delay': 'API_DELAY',
+            'settings.max_retries': 'MAX_RETRIES',
+            'settings.log_level': 'LOG_LEVEL'
         }
         
-        if os.path.exists(self.config_file):
-            try:
-                with open(self.config_file, 'r', encoding='utf-8') as f:
-                    return json.load(f)
-            except Exception as e:
-                logging.warning(f"Failed to load config file {self.config_file}: {e}")
-                return default_config
-        else:
-            # Create default config file
-            with open(self.config_file, 'w', encoding='utf-8') as f:
-                json.dump(default_config, f, indent=2, ensure_ascii=False)
-            return default_config
-    
-    def get(self, key_path: str, default=None):
-        """Get configuration value using dot notation (e.g., 'azure_openai.api_key')."""
-        keys = key_path.split('.')
-        value = self.config
-        for key in keys:
-            if isinstance(value, dict) and key in value:
-                value = value[key]
+        if key_path in key_mappings:
+            env_key = key_mappings[key_path]
+            # 特別なフォーマット処理
+            if key_path == 'paths.research_report':
+                base_path = self.common_config.get(env_key)
+                return f"{base_path}/{{date}}.md" if base_path else default
             else:
-                return default
-        return value
+                return self.common_config.get(env_key, default)
+        
+        return default
 
 
 class ChapterExtractor:
@@ -98,10 +87,37 @@ class ChapterExtractor:
         # Get content after marker
         after_marker = content[marker_pos + len(self.chapter_marker):]
         
+        # Find the first substantial content block (stop at next major heading or empty line patterns)
+        lines = after_marker.split('\n')
+        chapter_section = []
+        
+        for i, line in enumerate(lines):
+            # Stop at next major section or when we see repeated patterns
+            if (i > 0 and line.strip() and 
+                (line.startswith('##') or line.startswith('#') or 
+                 (i > 20 and line.strip().startswith('0.')))):  # Stop if we see another "0." after some content
+                break
+            chapter_section.append(line)
+            # Stop after finding a reasonable number of chapters (to avoid duplicates)
+            if len([l for l in chapter_section if re.match(r'^\d+\.', l.strip())]) > 15:
+                break
+        
+        chapter_text = '\n'.join(chapter_section)
+        
         # Extract numbered chapters using regex
-        # Pattern matches: 1. **Title** or 1. ****Title****
-        chapter_pattern = r'(\d+)\.\s*\*{2,4}([^*\n]+)\*{2,4}'
-        matches = re.findall(chapter_pattern, after_marker)
+        # Pattern matches: 1. **Title** or 1. ****Title**** or 1. Simple Title
+        chapter_pattern = r'(\d+)\.\s*(?:\*{2,4}([^*\n]+)\*{2,4}|([^\n]+))'
+        raw_matches = re.findall(chapter_pattern, chapter_text)
+        
+        # Process matches (handle both bold and plain formats) and deduplicate
+        matches = []
+        seen_numbers = set()
+        for match in raw_matches:
+            number = match[0]
+            title = match[1] if match[1] else match[2]  # Use bold title or plain title
+            if title.strip() and number not in seen_numbers:  # Skip empty titles and duplicates
+                matches.append((number, title.strip()))
+                seen_numbers.add(number)
         
         if not matches:
             raise ValueError("No chapters found in the expected format")
@@ -121,19 +137,8 @@ class RadioScriptGenerator:
     
     def __init__(self, config: RadioGeneratorConfig):
         self.config = config
-        self.client = self._init_openai_client()
+        self.client = AzureOpenAIClient()  # Use common client
         self.conversation_history = []
-        
-    def _init_openai_client(self) -> OpenAI:
-        """Initialize OpenAI client with Azure configuration."""
-        api_key = os.getenv(self.config.get('azure_openai.api_key_env'))
-        if not api_key:
-            raise ValueError(f"Azure OpenAI API key not found in environment variable: {self.config.get('azure_openai.api_key_env')}")
-        
-        return OpenAI(
-            api_key=api_key,
-            base_url=self.config.get('azure_openai.base_url')
-        )
     
     def load_prompt_template(self) -> str:
         """Load the prompt template from file."""
@@ -163,37 +168,16 @@ class RadioScriptGenerator:
             if is_first_chapter:
                 # First chapter: use full prompt template + research report
                 prompt_template = self.load_prompt_template()
-                user_message = f"{prompt_template}\n\n研究レポート:\n{research_report}\n\n最初の章から始めてください: {chapter['content']}"
+                user_message = f"{prompt_template}\n\nレポート:\n{research_report}\n\n最初の章から始めてください: {chapter['content']}"
                 
-                # Initialize conversation
-                self.conversation_history = [
-                    {"role": "system", "content": "あなたは経験豊富なラジオ番組制作者です。研究レポートを基に魅力的なラジオトーク台本を章ごとに作成します。各章の内容を深く理解し、聞き手が興味を持つような構成で台本を作成してください。"},
-                    {"role": "user", "content": user_message}
-                ]
+                # Reset conversation and set system message
+                self.client.reset_conversation()
+                self.client.add_system_message("あなたは経験豊富なラジオ番組制作者です。レポートを基に魅力的なラジオトーク台本を章ごとに作成します。各章の内容を深く理解し、聞き手が興味を持つような構成で台本を作成してください。")
+                
+                script_content = self.client.continue_conversation(user_message)
             else:
                 # Subsequent chapters: just say "次の章"
-                self.conversation_history.append({
-                    "role": "user", 
-                    "content": "次の章をお願いします。"
-                })
-            
-            # Call OpenAI API
-            response = self.client.chat.completions.create(
-                model=self.config.get('azure_openai.model'),
-                messages=self.conversation_history,
-                temperature=0.7
-            )
-            
-            script_content = response.choices[0].message.content
-            
-            # Add assistant response to conversation history
-            self.conversation_history.append({
-                "role": "assistant",
-                "content": script_content
-            })
-            
-            # Rate limiting
-            time.sleep(self.config.get('settings.api_delay', 2))
+                script_content = self.client.continue_conversation("次の章をお願いします。")
             
             return script_content
             
@@ -248,10 +232,7 @@ class FileManager:
     
     def sanitize_filename(self, filename: str) -> str:
         """Sanitize filename by removing/replacing special characters."""
-        # Remove or replace problematic characters
-        filename = re.sub(r'[<>:"/\\|?*]', '', filename)
-        filename = filename.replace(' ', '_')
-        return filename.strip()
+        return sanitize_filename(filename)  # Use common utility
     
     def save_chapter_script(self, chapter_data: Dict, script: str, 
                           output_dir: Path) -> str:
@@ -282,53 +263,23 @@ class FileManager:
     def create_output_directory(self, date: str = None) -> Path:
         """Create output directory for the date."""
         if date is None:
-            date = datetime.now().strftime('%Y-%m-%d')
+            date = format_date_for_path(datetime.now())
         
         base_path = Path(self.config.get('paths.output_base'))
         output_dir = base_path / date
-        output_dir.mkdir(parents=True, exist_ok=True)
-        
-        return output_dir
+        return ensure_directory(output_dir)  # Use common utility
 
 
 class LineNotifier:
-    """Send notifications via LINE Notify API."""
+    """Send notifications via LINE Notify API - wrapper for common client."""
     
     def __init__(self, config: RadioGeneratorConfig):
         self.config = config
-        self.token = os.getenv(self.config.get('line.token_env'))
+        self.client = LineNotifyClient()  # Use common client
     
     def send_notification(self, message: str) -> bool:
         """Send notification message via LINE."""
-        if not self.token:
-            logging.warning(f"LINE token not found in environment variable: {self.config.get('line.token_env')}")
-            return False
-        
-        try:
-            headers = {
-                'Authorization': f'Bearer {self.token}',
-                'Content-Type': 'application/x-www-form-urlencoded'
-            }
-            
-            data = {'message': message}
-            
-            response = requests.post(
-                self.config.get('line.api_url'),
-                headers=headers,
-                data=data,
-                timeout=10
-            )
-            
-            if response.status_code == 200:
-                logging.info("LINE notification sent successfully")
-                return True
-            else:
-                logging.error(f"LINE notification failed: {response.status_code}")
-                return False
-        
-        except Exception as e:
-            logging.error(f"Failed to send LINE notification: {e}")
-            return False
+        return self.client.send_message(message)
 
 
 class RadioGenerator:

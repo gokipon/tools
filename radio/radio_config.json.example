@@ -1,0 +1,22 @@
+{
+  "azure_openai": {
+    "api_key_env": "AZURE_OPENAI_API_KEY",
+    "base_url": "https://YOUR-RESOURCE-NAME.openai.azure.com/openai/v1/",
+    "model": "gpt-4o"
+  },
+  "line": {
+    "token_env": "LINE_NOTIFY_TOKEN",
+    "api_url": "https://notify-api.line.me/api/notify"
+  },
+  "paths": {
+    "research_report": "/Users/haruki/Library/Mobile Documents/iCloud~md~obsidian/Documents/I-think-therefore-I-am/artifact/research-report/{date}.md",
+    "prompt_template": "/Users/haruki/Library/Mobile Documents/iCloud~md~obsidian/Documents/I-think-therefore-I-am/pt/ラジオ原稿作り.md",
+    "output_base": "/Users/haruki/Library/Mobile Documents/iCloud~md~obsidian/Documents/I-think-therefore-I-am/artifact/radio"
+  },
+  "settings": {
+    "chapter_marker": "#automation/research-chapter",
+    "api_delay": 2,
+    "max_retries": 3,
+    "log_level": "INFO"
+  }
+}

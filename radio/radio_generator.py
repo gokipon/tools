@@ -245,14 +245,7 @@ class FileManager:
         filepath = output_dir / filename
         
         # Create content with metadata
-        content = f"""# 第{chapter_num}章: {chapter['title']}
-
-生成日時: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-
----
-
-{script}
-"""
+        content = f"""{script}"""
         
         with open(filepath, 'w', encoding='utf-8') as f:
             f.write(content)
